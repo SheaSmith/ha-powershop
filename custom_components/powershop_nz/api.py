@@ -180,7 +180,6 @@ class PowershopApiClient:
                     )
 
                     uri, headers, data = client.sign(uri, method, data, headers)
-                    print(uri, headers, data)
 
                 response = await self._session.request(
                     method=method,
@@ -188,7 +187,6 @@ class PowershopApiClient:
                     headers=headers,
                     data=data
                 )
-                print(await response.json())
                 _verify_response_or_raise(response)
                 return await response.json()
 
