@@ -10,19 +10,20 @@ from .coordinator import BlueprintDataUpdateCoordinator
 
 
 class IntegrationBlueprintEntity(CoordinatorEntity[BlueprintDataUpdateCoordinator]):
-    """BlueprintEntity class."""
+    """Base entity for a Powershop property-backed device."""
 
     _attr_attribution = ATTRIBUTION
 
-    def __init__(self, coordinator: BlueprintDataUpdateCoordinator) -> None:
-        """Initialize."""
+    def __init__(self, coordinator: BlueprintDataUpdateCoordinator, *, consumer_id: str, name: str | None, connection_number: str | None) -> None:
+        """Initialize entity for a specific property (consumer_id)."""
         super().__init__(coordinator)
-        self._attr_unique_id = coordinator.config_entry.entry_id
+        # Unique per property within this integration
+        self._consumer_id = consumer_id
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{consumer_id}"
+        # Device name = property name; model = connection_number
         self._attr_device_info = DeviceInfo(
-            identifiers={
-                (
-                    coordinator.config_entry.domain,
-                    coordinator.config_entry.entry_id,
-                ),
-            },
+            identifiers={(coordinator.config_entry.domain, f"consumer_{consumer_id}")},
+            name=name,
+            model=connection_number,
+            manufacturer="Powershop NZ",
         )

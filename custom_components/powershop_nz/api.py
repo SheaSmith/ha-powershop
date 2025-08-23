@@ -86,21 +86,59 @@ class PowershopApiClient:
         )
 
     async def async_get_hourly_usage(self, consumer_id) -> Any:
-        """Get the usage for a given account from Powershop"""
+        """Get the usage for a given property from Powershop by consumer_id."""
         await self.async_login()
 
-        to_datetime = datetime.datetime.combine(datetime.datetime.now().date() + datetime.timedelta(days=1),
-                                                datetime.datetime.min.time())
+        to_datetime = datetime.datetime.combine(
+            datetime.datetime.now().date() + datetime.timedelta(days=1),
+            datetime.datetime.min.time(),
+        )
         from_datetime = to_datetime - datetime.timedelta(days=30)
 
         return await self._api_wrapper(
             method="get",
-            path="properties/%s/usages" % consumer_id,
+            path=f"properties/{consumer_id}/usages",
             params={
                 "from": from_datetime.strftime("%Y-%m-%d %H:%M:%S"),
                 "to": to_datetime.strftime("%Y-%m-%d %H:%M:%S"),
-            }
+            },
         )
+
+    async def async_get_data(self) -> Any:
+        """Fetch accounts and per-property hourly usage for all properties."""
+        accounts = await self.async_get_accounts()
+        # Extract properties across all accounts
+        properties: list[dict[str, Any]] = []
+        usages: dict[str, Any] = {}
+
+        data = accounts.get("data", {})
+        for account in data.get("accounts", []):
+            for prop in account.get("properties", []):
+                consumer_id = str(prop.get("consumer_id"))
+                if not consumer_id:
+                    continue
+                properties.append(
+                    {
+                        "consumer_id": consumer_id,
+                        "name": prop.get("name"),
+                        "connection_number": prop.get("connection_number"),
+                        "account_number": account.get("number"),
+                        "account_name": account.get("name"),
+                    }
+                )
+        # Fetch usage per property (sequential to keep simple/minimal changes)
+        for prop in properties:
+            cid = prop["consumer_id"]
+            try:
+                usages[cid] = await self.async_get_hourly_usage(cid)
+            except Exception as ex:  # Keep other properties even if one fails
+                usages[cid] = {"error": str(ex)}
+
+        return {
+            "properties": properties,
+            "usages": usages,
+            "raw_accounts": accounts,
+        }
 
     async def _api_wrapper(
             self,
@@ -114,7 +152,7 @@ class PowershopApiClient:
             'client_version': API_CLIENT_VERSION
         }
 
-        if data is not None:
+        if params is not None:
             actual_params = actual_params | params
 
         """Get information from the API."""
