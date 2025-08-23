@@ -159,7 +159,13 @@ class PowershopApiClient:
         """Get information from the API."""
         try:
             async with async_timeout.timeout(10):
-                uri = API_BASE_URL + path + '?' + urlencode(actual_params)
+                # Build the base URI ensuring a single slash between base and path
+                base = API_BASE_URL.rstrip("/")
+                uri = f"{base}/{path}"
+                # Append query parameters to the URI (do not also pass them to request, to keep OAuth signature valid)
+                if actual_params:
+                    uri = uri + "?" + urlencode(actual_params)
+
                 headers = {
                     'Accept': 'application/json'
                 }
@@ -180,8 +186,7 @@ class PowershopApiClient:
                     method=method,
                     url=uri,
                     headers=headers,
-                    data=data,
-                    params=actual_params
+                    data=data
                 )
                 print(await response.json())
                 _verify_response_or_raise(response)
