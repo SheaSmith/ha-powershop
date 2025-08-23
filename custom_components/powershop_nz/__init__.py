@@ -1,5 +1,5 @@
 """
-Custom integration to integrate integration_blueprint with Home Assistant.
+Custom integration to integrate powershop_nz with Home Assistant.
 
 For more details about this integration, please refer to
 https://github.com/ludeeus/integration_blueprint
@@ -14,7 +14,7 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.loader import async_get_loaded_integration
 
-from .api import IntegrationBlueprintApiClient
+from .api import PowershopApiClient
 from .const import DOMAIN, LOGGER
 from .coordinator import BlueprintDataUpdateCoordinator
 from .data import IntegrationBlueprintData
@@ -26,8 +26,6 @@ if TYPE_CHECKING:
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
-    Platform.BINARY_SENSOR,
-    Platform.SWITCH,
 ]
 
 
@@ -44,7 +42,7 @@ async def async_setup_entry(
         update_interval=timedelta(hours=1),
     )
     entry.runtime_data = IntegrationBlueprintData(
-        client=IntegrationBlueprintApiClient(
+        client=PowershopApiClient(
             username=entry.data[CONF_USERNAME],
             password=entry.data[CONF_PASSWORD],
             session=async_get_clientsession(hass),

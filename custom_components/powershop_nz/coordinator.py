@@ -1,4 +1,4 @@
-"""DataUpdateCoordinator for integration_blueprint."""
+"""DataUpdateCoordinator for powershop_nz."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
-    IntegrationBlueprintApiClientAuthenticationError,
-    IntegrationBlueprintApiClientError,
+    PowershopApiClientAuthenticationError,
+    PowershopApiClientError,
 )
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ class BlueprintDataUpdateCoordinator(DataUpdateCoordinator):
         """Update data via library."""
         try:
             return await self.config_entry.runtime_data.client.async_get_data()
-        except IntegrationBlueprintApiClientAuthenticationError as exception:
+        except PowershopApiClientAuthenticationError as exception:
             raise ConfigEntryAuthFailed(exception) from exception
-        except IntegrationBlueprintApiClientError as exception:
+        except PowershopApiClientError as exception:
             raise UpdateFailed(exception) from exception
