@@ -29,8 +29,8 @@ ENTITY_DESCRIPTIONS = (
         icon="mdi:flash",
     ),
     SensorEntityDescription(
-        key="special_incl_rate",
-        name="Special rate",
+        key="daily_price",
+        name="Daily price",
         icon="mdi:cash",
     ),
     SensorEntityDescription(
@@ -370,9 +370,14 @@ class IntegrationBlueprintElementSensor(IntegrationBlueprintEntity, SensorEntity
 class IntegrationBlueprintSpecialInclRateSensor(
     IntegrationBlueprintEntity, SensorEntity
 ):
-    """Sensor to show special GST-inclusive rate (current month) in $/kWh for a property."""
+    """Sensor to show the most recent daily price ($) for a property from /usage API and publish statistics.
 
-    _attr_native_unit_of_measurement = "$/kWh"
+    Statistics model: external price series with hourly sampling using daily price as a step function.
+    We publish one sample at the start of each day (local midnight) with the current day's price, and
+    we maintain a running sum of daily prices as 'sum' to enable Energy dashboard-like trends.
+    """
+
+    _attr_native_unit_of_measurement = "$"
 
     def __init__(
         self,
@@ -394,32 +399,94 @@ class IntegrationBlueprintSpecialInclRateSensor(
         self._prop_name = name or f"Property {consumer_id}"
         # Make unique ID distinct from consumption sensor
         self._attr_unique_id = (
-            f"{coordinator.config_entry.entry_id}_{consumer_id}_special_incl_rate"
+            f"{coordinator.config_entry.entry_id}_{consumer_id}_daily_price"
         )
+        # Cache last published stats date to avoid duplicate submissions
+        self._last_stats_date: str | None = None
 
     @property
     def name(self) -> str | None:
-        return "Special rate"
+        return "Daily price"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        await self._publish_statistics()
+
+    def _handle_coordinator_update(self) -> None:
+        self.hass.async_create_task(self._publish_statistics())
+        super()._handle_coordinator_update()
+
+    async def _publish_statistics(self) -> None:
+        data = self.coordinator.data or {}
+        price_map: dict[str, Any] = (data.get("daily_prices") or {}).get(self._consumer_id) or {}
+        if not price_map:
+            return
+        # Build chronological list of dates
+        dates = sorted(price_map.keys())
+        if not dates:
+            return
+        tz = dt_util.get_time_zone(self.hass.config.time_zone) or dt_util.UTC
+        running_sum = 0.0
+        stats: list[StatisticData] = []
+        for dstr in dates:
+            try:
+                d = date.fromisoformat(dstr)
+            except Exception:
+                try:
+                    d = datetime.strptime(dstr, "%Y-%m-%d").date()
+                except Exception:
+                    continue
+            price = price_map.get(dstr)
+            try:
+                running_sum += float(price)
+            except Exception:
+                continue
+            start_local = datetime.combine(d, time(0, 0, tzinfo=tz))
+            start_utc = dt_util.as_utc(start_local)
+            stats.append(StatisticData(start=start_utc, sum=running_sum))
+        if not stats:
+            return
+        safe_cid = _safe_stat_id_part(str(self._consumer_id))
+        metadata = StatisticMetaData(
+            has_mean=False,
+            has_sum=True,
+            name=f"{self._prop_name} Daily price",
+            source=DOMAIN,
+            statistic_id=f"{DOMAIN}:daily_price_{safe_cid}",
+            unit_of_measurement="$",
+        )
+        async_add_external_statistics(self.hass, metadata, stats)
 
     @property
     def native_value(self) -> float | None:
         data = self.coordinator.data or {}
-        rates_by_cid: dict[str, Any] = data.get("rates", {})
-        payload = rates_by_cid.get(self._consumer_id) or {}
-        value = payload.get("special_incl_dollars_current_month")
+        price_map: dict[str, Any] = (data.get("daily_prices") or {}).get(self._consumer_id) or {}
+        if not price_map:
+            return None
+        # Prefer today's date, else most recent key
+        today = datetime.now().strftime("%Y-%m-%d")
+        if today in price_map:
+            value = price_map.get(today)
+        else:
+            # pick max date string which works for ISO format
+            value = price_map.get(max(price_map.keys())) if price_map else None
         try:
-            return round(float(value), 4) if value is not None else None
+            return round(float(value), 2) if value is not None else None
         except Exception:
             return None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         data = self.coordinator.data or {}
-        rates_by_cid: dict[str, Any] = data.get("rates", {})
-        payload = rates_by_cid.get(self._consumer_id) or {}
-        if not payload:
+        price_map: dict[str, Any] = (data.get("daily_prices") or {}).get(self._consumer_id) or {}
+        if not price_map:
             return None
+        today = datetime.now().strftime("%Y-%m-%d")
+        if today in price_map:
+            date_used = today
+        else:
+            date_used = max(price_map.keys()) if price_map else None
         return {
-            "month": payload.get("month_label"),
-            "source": "special",
+            "date": date_used,
+            "source": "/usage API",
         }

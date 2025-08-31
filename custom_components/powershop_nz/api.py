@@ -115,6 +115,22 @@ class PowershopApiClient:
             },
         )
 
+    async def async_get_daily_usage_with_price(self, consumer_id: str, date_from: datetime.date, date_to: datetime.date) -> Any:
+        """Get daily usage summary that includes price field using the v4 /usage endpoint.
+
+        Returns payload like {"data": {"usage": [{"date": ..., "units": float, "price": float}, ...], "reading_unit": "kWh"}}
+        """
+        await self.async_login()
+        return await self._api_wrapper(
+            method="get",
+            path=f"properties/{consumer_id}/usage",
+            params={
+                "client_version": API_CLIENT_VERSION,
+                "from_date": date_from.strftime("%Y-%m-%d"),
+                "to_date": date_to.strftime("%Y-%m-%d"),
+            },
+        )
+
     async def _web_get_authenticity_token(self) -> str | None:
         """Fetch login page and extract authenticity/CSRF token.
         Returns token string or None if not found.
@@ -269,6 +285,7 @@ class PowershopApiClient:
         # Extract properties across all accounts
         properties: list[dict[str, Any]] = []
         usages: dict[str, Any] = {}
+        daily_prices: dict[str, Any] = {}
         rates_summary: dict[str, Any] = {}
 
         data = accounts.get("data", {})
@@ -296,6 +313,27 @@ class PowershopApiClient:
                 usages[cid] = await self.async_get_hourly_usage(cid)
             except Exception as ex:  # Keep other properties even if one fails
                 usages[cid] = {"error": str(ex)}
+            # Daily price from /usage endpoint for the last 10 days (or up to 30 if needed)
+            try:
+                end_date = datetime.datetime.now().date()
+                start_date = end_date - datetime.timedelta(days=10)
+                daily_payload = await self.async_get_daily_usage_with_price(cid, start_date, end_date)
+                daily_list = (daily_payload or {}).get("data", {}).get("usage", []) or []
+                # Map date -> price
+                price_map = {}
+                for d in daily_list:
+                    dstr = d.get("iso8601_date") or d.get("date")
+                    if not dstr:
+                        continue
+                    price = d.get("price")
+                    if price is not None:
+                        try:
+                            price_map[dstr] = float(price)
+                        except Exception:
+                            continue
+                daily_prices[cid] = price_map
+            except Exception:
+                daily_prices[cid] = {}
             # Rates
             special_incl_dollars = None
             try:
@@ -368,6 +406,7 @@ class PowershopApiClient:
         return {
             "properties": properties,
             "usages": usages,
+            "daily_prices": daily_prices,
             "rates": rates_summary,
             "elements": elements_by_property,
             "raw_accounts": accounts,
