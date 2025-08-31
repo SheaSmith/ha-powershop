@@ -163,7 +163,7 @@ class IntegrationBlueprintSensor(IntegrationBlueprintEntity, SensorEntity):
             has_sum=True,
             name=f"{self._prop_name} Consumption",
             source=DOMAIN,
-            statistic_id=f"{DOMAIN}:consumption:{self._consumer_id}",
+            statistic_id=f"{DOMAIN}:consumption_{self._consumer_id}",
             unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         )
         async_add_external_statistics(self.hass, metadata, stats)

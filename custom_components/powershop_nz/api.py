@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 import aiohttp
 import async_timeout
 import oauthlib.oauth1
+from oauthlib.oauth1 import SIGNATURE_TYPE_QUERY
 
 from custom_components.powershop_nz.const import API_BASE_URL, API_CLIENT_VERSION, API_KEY, API_SECRET, API_DEVICE_TYPE, \
     API_DEVICE_NAME
@@ -216,10 +217,11 @@ class PowershopApiClient:
                         client_key=API_KEY,
                         client_secret=API_SECRET,
                         resource_owner_key=self._token,
-                        resource_owner_secret=self._secret
+                        resource_owner_secret=self._secret,
+                        signature_type=SIGNATURE_TYPE_QUERY
                     )
 
-                    uri, headers, data = client.sign(uri, method.upper(), data, headers)
+                    uri, headers, data = client.sign(uri, method, data, headers)
 
                 response = await self._session.request(
                     method=method,
