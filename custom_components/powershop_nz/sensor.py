@@ -53,6 +53,9 @@ async def async_setup_entry(
         coordinator.data.get("properties", []) if coordinator.data else []
     )
 
+    # Track created element sensors so we can add new ones dynamically on updates
+    created_elements: set[str] = set()
+
     entities: list[SensorEntity] = []
     for prop in props:
         cid = str(prop.get("consumer_id"))
@@ -89,9 +92,40 @@ async def async_setup_entry(
                     element_name=elem_name,
                 )
             )
+            created_elements.add(f"{cid}|{elem_name}")
 
     if entities:
         async_add_entities(entities)
+
+    # Register a listener to dynamically add element sensors if they appear later
+    def _maybe_add_new_elements() -> None:
+        new_entities: list[SensorEntity] = []
+        data = coordinator.data or {}
+        elements_all = data.get("elements") or {}
+        for prop in props:
+            cid = str(prop.get("consumer_id"))
+            name = prop.get("name")
+            conn = prop.get("connection_number")
+            elem_map = elements_all.get(cid) or {}
+            for elem_name in elem_map.keys():
+                key = f"{cid}|{elem_name}"
+                if key in created_elements:
+                    continue
+                new_entities.append(
+                    IntegrationBlueprintElementSensor(
+                        coordinator=coordinator,
+                        entity_description=ENTITY_DESCRIPTIONS[2],
+                        consumer_id=cid,
+                        name=f"{name} {elem_name}",
+                        connection_number=conn,
+                        element_name=elem_name,
+                    )
+                )
+                created_elements.add(key)
+        if new_entities:
+            async_add_entities(new_entities)
+
+    coordinator.async_add_listener(_maybe_add_new_elements)
 
 
 class IntegrationBlueprintSensor(IntegrationBlueprintEntity, SensorEntity):
@@ -241,10 +275,11 @@ class IntegrationBlueprintElementSensor(IntegrationBlueprintEntity, SensorEntity
         )
         self.entity_description = entity_description
         self._element_name = element_name
+        # Create a safe key for IDs (avoid spaces/special chars)
+        safe = ''.join(ch if (ch.isalnum() or ch in ('_', '-')) else '_' for ch in element_name)
+        self._element_key = safe
         # Unique ID per element
-        self._attr_unique_id = (
-            f"{coordinator.config_entry.entry_id}_{consumer_id}_element_{element_name}"
-        )
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{consumer_id}_element_{self._element_key}"
         self._prop_name = name or f"Property {consumer_id}"
 
     @property
@@ -295,7 +330,7 @@ class IntegrationBlueprintElementSensor(IntegrationBlueprintEntity, SensorEntity
             has_sum=True,
             name=f"{self._prop_name} {self._element_name} Consumption",
             source=DOMAIN,
-            statistic_id=f"{DOMAIN}:consumption_{self._consumer_id}_{self._element_name}",
+            statistic_id=f"{DOMAIN}:consumption_{self._consumer_id}_{self._element_key}",
             unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         )
         async_add_external_statistics(self.hass, metadata, stats)
