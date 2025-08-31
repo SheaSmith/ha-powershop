@@ -33,6 +33,11 @@ ENTITY_DESCRIPTIONS = (
         name="Special incl rate (current month)",
         icon="mdi:cash",
     ),
+    SensorEntityDescription(
+        key="element_consumption_kwh",
+        name="Element Consumption (kWh)",
+        icon="mdi:flash-triangle-outline",
+    ),
 )
 
 
@@ -46,7 +51,7 @@ async def async_setup_entry(
     coordinator = entry.runtime_data.coordinator
     props: list[dict[str, Any]] = coordinator.data.get("properties", []) if coordinator.data else []
 
-    entities: list[IntegrationBlueprintSensor | IntegrationBlueprintSpecialInclRateSensor] = []
+    entities: list[SensorEntity] = []
     for prop in props:
         cid = str(prop.get("consumer_id"))
         name = prop.get("name")
@@ -69,6 +74,19 @@ async def async_setup_entry(
                 connection_number=conn,
             )
         )
+        # Add a sensor per meter element from CSV, if available
+        elements_by_cid = (coordinator.data or {}).get("elements", {}).get(cid, {})
+        for elem_name in elements_by_cid.keys():
+            entities.append(
+                IntegrationBlueprintElementSensor(
+                    coordinator=coordinator,
+                    entity_description=ENTITY_DESCRIPTIONS[2],
+                    consumer_id=cid,
+                    name=f"{name} {elem_name}",
+                    connection_number=conn,
+                    element_name=elem_name,
+                )
+            )
 
     if entities:
         async_add_entities(entities)
@@ -188,6 +206,107 @@ class IntegrationBlueprintSensor(IntegrationBlueprintEntity, SensorEntity):
                 break
         if chosen is None:
             chosen = usages[-1]
+        values = chosen.get("usage", []) or []
+        if not values:
+            return None
+        try:
+            total_wh = float(sum(float(v) for v in values))
+            return round(total_wh / 1000.0, 3)
+        except Exception:
+            return None
+
+
+class IntegrationBlueprintElementSensor(IntegrationBlueprintEntity, SensorEntity):
+    """Consumption sensor for a specific meter element (from CSV)."""
+
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+
+    def __init__(
+        self,
+        coordinator: BlueprintDataUpdateCoordinator,
+        entity_description: SensorEntityDescription,
+        *,
+        consumer_id: str,
+        name: str | None,
+        connection_number: str | None,
+        element_name: str,
+    ) -> None:
+        super().__init__(
+            coordinator,
+            consumer_id=consumer_id,
+            name=name,
+            connection_number=connection_number,
+        )
+        self.entity_description = entity_description
+        self._element_name = element_name
+        # Unique ID per element
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{consumer_id}_element_{element_name}"
+        self._prop_name = name or f"Property {consumer_id}"
+
+    @property
+    def name(self) -> str | None:
+        return f"{self._prop_name} {self._element_name} Consumption"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        await self._publish_statistics()
+
+    def _handle_coordinator_update(self) -> None:
+        self.hass.async_create_task(self._publish_statistics())
+        super()._handle_coordinator_update()
+
+    async def _publish_statistics(self) -> None:
+        data = self.coordinator.data or {}
+        by_cid = (data.get("elements") or {}).get(self._consumer_id) or {}
+        payload = by_cid.get(self._element_name)
+        if not payload:
+            return
+        usage_days = payload.get("usages", [])
+        if not usage_days:
+            return
+
+        tz = dt_util.get_time_zone(self.hass.config.time_zone) or dt_util.UTC
+        running_sum_kwh = 0.0
+        stats: list[StatisticData] = []
+        for day in usage_days:
+            d = datetime.strptime(day.get("date"), "%Y-%m-%d").date()
+            base_local = datetime.combine(d, time(0, 0, tzinfo=tz))
+            values_wh = day.get("usage", [])
+            # Aggregate half-hour Wh into hourly kWh
+            for i in range(0, len(values_wh) - 1, 2):
+                try:
+                    wh = float(values_wh[i]) + float(values_wh[i + 1])
+                except Exception:
+                    continue
+                kwh = wh / 1000.0
+                running_sum_kwh += kwh
+                hour_index = i // 2
+                start_local = base_local + timedelta(hours=hour_index)
+                start_utc = dt_util.as_utc(start_local)
+                stats.append(StatisticData(start=start_utc, sum=running_sum_kwh))
+        if not stats:
+            return
+        metadata = StatisticMetaData(
+            has_mean=False,
+            has_sum=True,
+            name=f"{self._prop_name} {self._element_name} Consumption",
+            source=DOMAIN,
+            statistic_id=f"{DOMAIN}:consumption_{self._consumer_id}_{self._element_name}",
+            unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        )
+        async_add_external_statistics(self.hass, metadata, stats)
+
+    @property
+    def native_value(self) -> float | None:
+        data = self.coordinator.data or {}
+        by_cid = (data.get("elements") or {}).get(self._consumer_id) or {}
+        payload = by_cid.get(self._element_name)
+        if not payload:
+            return None
+        usages = payload.get("usages", [])
+        if not usages:
+            return None
+        chosen = usages[-1]
         values = chosen.get("usage", []) or []
         if not values:
             return None
