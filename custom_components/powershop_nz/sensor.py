@@ -128,6 +128,16 @@ async def async_setup_entry(
     coordinator.async_add_listener(_maybe_add_new_elements)
 
 
+import re
+
+def _safe_stat_id_part(value: str) -> str:
+    # Lowercase, allow only a-z0-9_, collapse repeats, strip edges
+    s = value.lower()
+    s = re.sub(r"[^a-z0-9_]", "_", s)
+    s = re.sub(r"_+", "_", s).strip("_")
+    return s or "unknown"
+
+
 class IntegrationBlueprintSensor(IntegrationBlueprintEntity, SensorEntity):
     """powershop_nz Sensor class."""
 
@@ -212,12 +222,13 @@ class IntegrationBlueprintSensor(IntegrationBlueprintEntity, SensorEntity):
         if not stats:
             return
 
+        safe_cid = _safe_stat_id_part(str(self._consumer_id))
         metadata = StatisticMetaData(
             has_mean=False,
             has_sum=True,
             name=f"{self._prop_name} Consumption",
             source=DOMAIN,
-            statistic_id=f"{DOMAIN}:consumption_{self._consumer_id}",
+            statistic_id=f"{DOMAIN}:consumption_{safe_cid}",
             unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         )
         async_add_external_statistics(self.hass, metadata, stats)
@@ -275,10 +286,9 @@ class IntegrationBlueprintElementSensor(IntegrationBlueprintEntity, SensorEntity
         )
         self.entity_description = entity_description
         self._element_name = element_name
-        # Create a safe key for IDs (avoid spaces/special chars)
-        safe = ''.join(ch if (ch.isalnum() or ch in ('_', '-')) else '_' for ch in element_name)
-        self._element_key = safe
-        # Unique ID per element
+        # Create a safe key for IDs and statistics (lowercase, underscores only)
+        self._element_key = _safe_stat_id_part(element_name)
+        # Unique ID per element (unique_id can keep element key safe form)
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{consumer_id}_element_{self._element_key}"
         self._prop_name = name or f"Property {consumer_id}"
 
@@ -325,12 +335,13 @@ class IntegrationBlueprintElementSensor(IntegrationBlueprintEntity, SensorEntity
                 stats.append(StatisticData(start=start_utc, sum=running_sum_kwh))
         if not stats:
             return
+        safe_cid = _safe_stat_id_part(str(self._consumer_id))
         metadata = StatisticMetaData(
             has_mean=False,
             has_sum=True,
             name=f"{self._prop_name} {self._element_name} Consumption",
             source=DOMAIN,
-            statistic_id=f"{DOMAIN}:consumption_{self._consumer_id}_{self._element_key}",
+            statistic_id=f"{DOMAIN}:consumption_{safe_cid}_{self._element_key}",
             unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         )
         async_add_external_statistics(self.hass, metadata, stats)
