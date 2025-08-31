@@ -30,7 +30,7 @@ ENTITY_DESCRIPTIONS = (
     ),
     SensorEntityDescription(
         key="special_incl_rate",
-        name="Special incl rate (current month)",
+        name="Special rate",
         icon="mdi:cash",
     ),
 )
@@ -44,9 +44,13 @@ async def async_setup_entry(
     """Set up the sensor platform."""
     # Create a sensor per property returned by the coordinator
     coordinator = entry.runtime_data.coordinator
-    props: list[dict[str, Any]] = coordinator.data.get("properties", []) if coordinator.data else []
+    props: list[dict[str, Any]] = (
+        coordinator.data.get("properties", []) if coordinator.data else []
+    )
 
-    entities: list[IntegrationBlueprintSensor | IntegrationBlueprintSpecialInclRateSensor] = []
+    entities: list[
+        IntegrationBlueprintSensor | IntegrationBlueprintSpecialInclRateSensor
+    ] = []
     for prop in props:
         cid = str(prop.get("consumer_id"))
         name = prop.get("name")
@@ -198,7 +202,9 @@ class IntegrationBlueprintSensor(IntegrationBlueprintEntity, SensorEntity):
             return None
 
 
-class IntegrationBlueprintSpecialInclRateSensor(IntegrationBlueprintEntity, SensorEntity):
+class IntegrationBlueprintSpecialInclRateSensor(
+    IntegrationBlueprintEntity, SensorEntity
+):
     """Sensor to show special GST-inclusive rate (current month) in $/kWh for a property."""
 
     _attr_native_unit_of_measurement = "$/kWh"
@@ -222,12 +228,13 @@ class IntegrationBlueprintSpecialInclRateSensor(IntegrationBlueprintEntity, Sens
         self._consumer_id = consumer_id
         self._prop_name = name or f"Property {consumer_id}"
         # Make unique ID distinct from consumption sensor
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{consumer_id}_special_incl_rate"
+        self._attr_unique_id = (
+            f"{coordinator.config_entry.entry_id}_{consumer_id}_special_incl_rate"
+        )
 
     @property
     def name(self) -> str | None:
-        base = self._prop_name
-        return f"{base} Special incl rate (current month)"
+        return "Special rate"
 
     @property
     def native_value(self) -> float | None:
