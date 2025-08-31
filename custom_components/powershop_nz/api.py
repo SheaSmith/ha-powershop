@@ -57,6 +57,14 @@ class PowershopApiClient:
         self._token = None
         self._secret = None
 
+    async def async_get_rates(self, consumer_id: str) -> Any:
+        """Get the rates for a given property from Powershop by consumer_id."""
+        await self.async_login()
+        return await self._api_wrapper(
+            method="get",
+            path=f"properties/{consumer_id}/rates",
+        )
+
     async def async_login(self) -> Any:
         """Login to PowerShop."""
         result = await self._api_wrapper(
@@ -110,6 +118,7 @@ class PowershopApiClient:
         # Extract properties across all accounts
         properties: list[dict[str, Any]] = []
         usages: dict[str, Any] = {}
+        rates_summary: dict[str, Any] = {}
 
         data = accounts.get("data", {})
         for account in data.get("accounts", []):
@@ -126,17 +135,50 @@ class PowershopApiClient:
                         "account_name": account.get("name"),
                     }
                 )
-        # Fetch usage per property (sequential to keep simple/minimal changes)
+        # Fetch usage and special incl rate per property (sequential minimal changes)
+        # Determine current month label like 'Aug'
+        current_month_label = datetime.datetime.now().strftime("%b")
         for prop in properties:
             cid = prop["consumer_id"]
+            # Usage
             try:
                 usages[cid] = await self.async_get_hourly_usage(cid)
             except Exception as ex:  # Keep other properties even if one fails
                 usages[cid] = {"error": str(ex)}
+            # Rates
+            special_incl_dollars = None
+            try:
+                rates_payload = await self.async_get_rates(cid)
+                # Navigate to special rates
+                rates_data = (rates_payload or {}).get("data", {}).get("rates", {})
+                specials = rates_data.get("special", []) or []
+                # Find first entry with a meter_number
+                first_with_meter = None
+                for item in specials:
+                    if item.get("meter_number"):
+                        first_with_meter = item
+                        break
+                if first_with_meter:
+                    # Find rate for current month
+                    for rate in first_with_meter.get("rates", []) or []:
+                        if rate.get("month") == current_month_label:
+                            incl_list = rate.get("incl", []) or []
+                            if incl_list:
+                                # Convert cents to dollars; spec says use the first value
+                                special_incl_dollars = float(incl_list[0]) / 100.0
+                            break
+            except Exception as ex:
+                # Keep going; store error info if needed later
+                special_incl_dollars = None
+            rates_summary[cid] = {
+                "month_label": current_month_label,
+                "special_incl_dollars_current_month": special_incl_dollars,
+            }
 
         return {
             "properties": properties,
             "usages": usages,
+            "rates": rates_summary,
             "raw_accounts": accounts,
         }
 

@@ -28,6 +28,11 @@ ENTITY_DESCRIPTIONS = (
         name="Consumption (kWh)",
         icon="mdi:flash",
     ),
+    SensorEntityDescription(
+        key="special_incl_rate",
+        name="Special incl rate (current month)",
+        icon="mdi:cash",
+    ),
 )
 
 
@@ -41,15 +46,27 @@ async def async_setup_entry(
     coordinator = entry.runtime_data.coordinator
     props: list[dict[str, Any]] = coordinator.data.get("properties", []) if coordinator.data else []
 
-    entities: list[IntegrationBlueprintSensor] = []
+    entities: list[IntegrationBlueprintSensor | IntegrationBlueprintSpecialInclRateSensor] = []
     for prop in props:
+        cid = str(prop.get("consumer_id"))
+        name = prop.get("name")
+        conn = prop.get("connection_number")
         entities.append(
             IntegrationBlueprintSensor(
                 coordinator=coordinator,
                 entity_description=ENTITY_DESCRIPTIONS[0],
-                consumer_id=str(prop.get("consumer_id")),
-                name=prop.get("name"),
-                connection_number=prop.get("connection_number"),
+                consumer_id=cid,
+                name=name,
+                connection_number=conn,
+            )
+        )
+        entities.append(
+            IntegrationBlueprintSpecialInclRateSensor(
+                coordinator=coordinator,
+                entity_description=ENTITY_DESCRIPTIONS[1],
+                consumer_id=cid,
+                name=name,
+                connection_number=conn,
             )
         )
 
@@ -179,3 +196,58 @@ class IntegrationBlueprintSensor(IntegrationBlueprintEntity, SensorEntity):
             return round(total_wh / 1000.0, 3)
         except Exception:
             return None
+
+
+class IntegrationBlueprintSpecialInclRateSensor(IntegrationBlueprintEntity, SensorEntity):
+    """Sensor to show special GST-inclusive rate (current month) in $/kWh for a property."""
+
+    _attr_native_unit_of_measurement = "$/kWh"
+
+    def __init__(
+        self,
+        coordinator: BlueprintDataUpdateCoordinator,
+        entity_description: SensorEntityDescription,
+        *,
+        consumer_id: str,
+        name: str | None,
+        connection_number: str | None,
+    ) -> None:
+        super().__init__(
+            coordinator,
+            consumer_id=consumer_id,
+            name=name,
+            connection_number=connection_number,
+        )
+        self.entity_description = entity_description
+        self._consumer_id = consumer_id
+        self._prop_name = name or f"Property {consumer_id}"
+        # Make unique ID distinct from consumption sensor
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{consumer_id}_special_incl_rate"
+
+    @property
+    def name(self) -> str | None:
+        base = self._prop_name
+        return f"{base} Special incl rate (current month)"
+
+    @property
+    def native_value(self) -> float | None:
+        data = self.coordinator.data or {}
+        rates_by_cid: dict[str, Any] = data.get("rates", {})
+        payload = rates_by_cid.get(self._consumer_id) or {}
+        value = payload.get("special_incl_dollars_current_month")
+        try:
+            return round(float(value), 4) if value is not None else None
+        except Exception:
+            return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        data = self.coordinator.data or {}
+        rates_by_cid: dict[str, Any] = data.get("rates", {})
+        payload = rates_by_cid.get(self._consumer_id) or {}
+        if not payload:
+            return None
+        return {
+            "month": payload.get("month_label"),
+            "source": "special",
+        }
